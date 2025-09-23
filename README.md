@@ -20,7 +20,7 @@ const jobs = {
         path: z.string(),
         outputFormat: z.enum(['mp4', 'avi', 'mov']),
       }),
-      async handler(payload) {
+      async run(payload) {
         // process video
       },
       workerOptions: {
@@ -35,7 +35,7 @@ const jobs = {
       subject: z.string(),
       body: z.string(),
     }),
-    async handler(payload) {
+    async run(payload) {
       // send email to `payload.to` with `payload.subject` and `payload.body`
     },
   }),

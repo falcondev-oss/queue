@@ -58,7 +58,7 @@ export class FlowBuilder<Input> {
   step<Output>(
     name: string,
     run: DefineJobOptions<StandardSchemaV1<Input, Input>, Output>['run'],
-    opts?: Omit<DefineJobOptions<StandardSchemaV1<Input, Input>, Output>, 'schema' | 'handler'>,
+    opts?: Omit<DefineJobOptions<StandardSchemaV1<Input, Input>, Output>, 'schema' | 'run'>,
   ) {
     this.steps.push({
       ...opts,
