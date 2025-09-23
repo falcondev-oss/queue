@@ -59,12 +59,12 @@ await startWorkers(jobs)
 Single jobs:
 
 ```ts
-queues.video.process({
+queues.video.process.queue({
   // payload type inferred from schema
   outputFormat: 'mp4',
   path: '/path/to/video.mov',
 })
-queues.sendEmail({
+queues.sendEmail.queue({
   to: 'user@example.com',
   subject: 'Hello',
   body: 'This is a test email',
@@ -74,7 +74,7 @@ queues.sendEmail({
 Bulk jobs:
 
 ```ts
-queues.sendEmail.bulk([
+queues.sendEmail.queueBulk([
   {
     to: 'user@example.com',
     subject: 'Hello',
