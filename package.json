@@ -1,7 +1,7 @@
 {
   "name": "@falcondev-oss/queue",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Type-safe job queues built on BullMQ and Standard Schema.",
   "license": "Apache-2.0",
   "repository": "github:falcondev-oss/queue",
