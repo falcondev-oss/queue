@@ -1,0 +1,59 @@
+{
+  "name": "@falcondev-oss/queue",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Type-safe job queues built on BullMQ and Standard Schema.",
+  "license": "Apache-2.0",
+  "repository": "github:falcondev-oss/queue",
+  "bugs": {
+    "url": "https://github.com/falcondev-oss/queue/issues"
+  },
+  "keywords": [
+    "queue",
+    "bullmq",
+    "standard-schema",
+    "typescript",
+    "job",
+    "worker",
+    "task",
+    "redis"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": "24",
+    "pnpm": "10"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint --cache . && prettier --check --cache .",
+    "lint:ci": "eslint --cache --cache-strategy content . && prettier --check --cache --cache-strategy content .",
+    "lint:fix": "eslint --fix --cache . && prettier --write --cache ."
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.0.0",
+    "@types/node": "^24.5.2",
+    "bullmq": "^5.58.7",
+    "ioredis": "^5.7.0"
+  },
+  "devDependencies": {
+    "@falcondev-oss/configs": "^5.0.2",
+    "eslint": "^9.36.0",
+    "prettier": "^3.6.2",
+    "tsdown": "^0.15.4",
+    "typescript": "^5.9.2"
+  },
+  "changelogithub": {
+    "extends": "gh:falcondev-it/configs/changelogithub"
+  }
+}
