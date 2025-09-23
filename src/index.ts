@@ -175,25 +175,29 @@ export function defineQueues<J extends JobDefinitionsObject>(jobs: J, opts?: Bul
         if (jobSymbol in jobOrJobs) {
           const jobName = fullPath.join('-')
 
-          const accessor = async (payload: unknown) => {
-            return jobOrJobs[jobSymbol].addToQueue(await getQueue(jobName), payload)
-          }
-          accessor.bulk = async (payloads: unknown[]) => {
-            return jobOrJobs[jobSymbol].addToQueueBulk(await getQueue(jobName), payloads)
-          }
-
-          return accessor satisfies QueueJobProxyAccessor<any, any>
+          return {
+            queue: async (payload: unknown) => {
+              return jobOrJobs[jobSymbol].addToQueue(await getQueue(jobName), payload)
+            },
+            queueBulk: async (payloads: unknown[]) => {
+              return jobOrJobs[jobSymbol].addToQueueBulk(await getQueue(jobName), payloads)
+            },
+          } satisfies QueueJobProxyAccessor<any, any>
         } else if (flowSymbol in jobOrJobs) {
           const flowName = fullPath.join('-')
 
-          const accessor = async (payload: unknown) => {
-            return jobOrJobs[flowSymbol].addToQueue(flowName, await getFlowProducer(), payload)
-          }
-          accessor.bulk = async (payloads: unknown[]) => {
-            return jobOrJobs[flowSymbol].addToQueueBulk(flowName, await getFlowProducer(), payloads)
-          }
-
-          return accessor satisfies QueueFlowProxyAccessor<any>
+          return {
+            queue: async (payload: unknown) => {
+              return jobOrJobs[flowSymbol].addToQueue(flowName, await getFlowProducer(), payload)
+            },
+            queueBulk: async (payloads: unknown[]) => {
+              return jobOrJobs[flowSymbol].addToQueueBulk(
+                flowName,
+                await getFlowProducer(),
+                payloads,
+              )
+            },
+          } satisfies QueueFlowProxyAccessor<any>
         }
 
         return createProxy(jobOrJobs, fullPath)
