@@ -8,16 +8,17 @@ import type {
   DefineFlowOptions,
   DefineJobOptions,
   Flow,
+  FlowAccessor,
   FlowStep,
   Job,
+  JobAccessor,
   JobDefinitionsObject,
-  QueueFlowProxyAccessor,
-  QueueJobProxy,
-  QueueJobProxyAccessor,
+  Jobs,
   WorkerOptions,
 } from './types'
 import { Queue as BullQueue, Worker as BullWorker, FlowProducer } from 'bullmq'
 import IORedis from 'ioredis'
+import { mapValues } from 'remeda'
 import { FlowBuilder, flowSymbol, jobSymbol, StandardSchemaV1Error } from './types'
 
 export function defineJob<Schema extends StandardSchemaV1, Output>(
@@ -121,7 +122,7 @@ export function defineFlow<Schema extends StandardSchemaV1, Output>(
   }
 }
 
-export function defineQueues<J extends JobDefinitionsObject>(jobs: J, opts?: BullQueueOptions) {
+export function defineJobs<J extends JobDefinitionsObject>(jobs: J, opts?: BullQueueOptions) {
   const connection =
     opts?.connection ??
     new IORedis({
@@ -162,49 +163,40 @@ export function defineQueues<J extends JobDefinitionsObject>(jobs: J, opts?: Bul
     return flowProducer
   }
 
-  function createProxy(obj: JobDefinitionsObject, path: string[]) {
-    return new Proxy(obj, {
-      get(target, p, receiver) {
-        if (typeof p !== 'string') return
+  function traverse(obj: JobDefinitionsObject, path: string[]): Jobs<any> {
+    return mapValues(obj, (jobOrJobs, p) => {
+      if (typeof jobOrJobs !== 'object') throw new Error('Job definition must be an object')
 
-        const jobOrJobs = Reflect.get(target, p, receiver)
-        if (typeof jobOrJobs !== 'object') return
+      const fullPath = [...path, p]
 
-        const fullPath = [...path, p]
+      if (jobSymbol in jobOrJobs) {
+        const jobName = fullPath.join('-')
 
-        if (jobSymbol in jobOrJobs) {
-          const jobName = fullPath.join('-')
+        return {
+          queue: async (payload: unknown) => {
+            return jobOrJobs[jobSymbol].addToQueue(await getQueue(jobName), payload)
+          },
+          queueBulk: async (payloads: unknown[]) => {
+            return jobOrJobs[jobSymbol].addToQueueBulk(await getQueue(jobName), payloads)
+          },
+        } satisfies JobAccessor<any, any>
+      } else if (flowSymbol in jobOrJobs) {
+        const flowName = fullPath.join('-')
 
-          return {
-            queue: async (payload: unknown) => {
-              return jobOrJobs[jobSymbol].addToQueue(await getQueue(jobName), payload)
-            },
-            queueBulk: async (payloads: unknown[]) => {
-              return jobOrJobs[jobSymbol].addToQueueBulk(await getQueue(jobName), payloads)
-            },
-          } satisfies QueueJobProxyAccessor<any, any>
-        } else if (flowSymbol in jobOrJobs) {
-          const flowName = fullPath.join('-')
+        return {
+          queue: async (payload: unknown) => {
+            return jobOrJobs[flowSymbol].addToQueue(flowName, await getFlowProducer(), payload)
+          },
+          queueBulk: async (payloads: unknown[]) => {
+            return jobOrJobs[flowSymbol].addToQueueBulk(flowName, await getFlowProducer(), payloads)
+          },
+        } satisfies FlowAccessor<any>
+      }
 
-          return {
-            queue: async (payload: unknown) => {
-              return jobOrJobs[flowSymbol].addToQueue(flowName, await getFlowProducer(), payload)
-            },
-            queueBulk: async (payloads: unknown[]) => {
-              return jobOrJobs[flowSymbol].addToQueueBulk(
-                flowName,
-                await getFlowProducer(),
-                payloads,
-              )
-            },
-          } satisfies QueueFlowProxyAccessor<any>
-        }
-
-        return createProxy(jobOrJobs, fullPath)
-      },
+      return traverse(jobOrJobs, fullPath)
     })
   }
-  return createProxy(jobs, []) as unknown as QueueJobProxy<J>
+  return traverse(jobs, []) as Jobs<J>
 }
 
 export async function startWorkers<J extends JobDefinitionsObject>(

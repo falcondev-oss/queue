@@ -99,7 +99,7 @@ export type JobDefinitionsObject = {
   [key: string]: Job<any, any> | Flow<any, any> | JobDefinitionsObject
 }
 
-export type QueueJobProxyAccessor<S extends StandardSchemaV1, Output> = {
+export type JobAccessor<S extends StandardSchemaV1, Output> = {
   queue: (
     payload: StandardSchemaV1.InferInput<S>,
   ) => Promise<BullJob<StandardSchemaV1.InferOutput<S>, Output, string>>
@@ -107,17 +107,17 @@ export type QueueJobProxyAccessor<S extends StandardSchemaV1, Output> = {
     payloads: StandardSchemaV1.InferInput<S>[],
   ) => Promise<BullJob<StandardSchemaV1.InferOutput<S>, Output, string>[]>
 }
-export type QueueFlowProxyAccessor<S extends StandardSchemaV1> = {
+export type FlowAccessor<S extends StandardSchemaV1> = {
   queue: (payload: StandardSchemaV1.InferInput<S>) => Promise<JobNode>
   queueBulk: (payloads: StandardSchemaV1.InferInput<S>[]) => Promise<JobNode[]>
 }
-export type QueueJobProxy<J extends JobDefinitionsObject> = {
+export type Jobs<J extends JobDefinitionsObject> = {
   [K in keyof J]: J[K] extends Job<infer S, infer O>
-    ? QueueJobProxyAccessor<S, O>
+    ? JobAccessor<S, O>
     : J[K] extends Flow<infer S, any>
-      ? QueueFlowProxyAccessor<S>
+      ? FlowAccessor<S>
       : J[K] extends JobDefinitionsObject
-        ? QueueJobProxy<J[K]>
+        ? Jobs<J[K]>
         : never
 }
 

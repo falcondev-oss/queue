@@ -44,7 +44,8 @@
     "@standard-schema/spec": "^1.0.0",
     "@types/node": "^24.5.2",
     "bullmq": "^5.58.7",
-    "ioredis": "^5.7.0"
+    "ioredis": "^5.7.0",
+    "remeda": "^2.32.0"
   },
   "devDependencies": {
     "@falcondev-oss/configs": "^5.0.2",

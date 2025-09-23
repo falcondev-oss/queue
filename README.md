@@ -13,7 +13,7 @@ npm add @falcondev-oss/queue
 #### 1. Define your job schemas and handlers
 
 ```ts
-const jobs = {
+const jobs = defineJobs({
   video: {
     process: defineJob({
       schema: z.object({
@@ -39,32 +39,26 @@ const jobs = {
       // send email to `payload.to` with `payload.subject` and `payload.body`
     },
   }),
-}
+})
 ```
 
-#### 2. Define queues
-
-```ts
-const queues = defineQueues(jobs)
-```
-
-#### 3. Start workers
+#### 2. Start workers
 
 ```ts
 await startWorkers(jobs)
 ```
 
-#### 4. Queue jobs
+#### 3. Queue jobs
 
 Single jobs:
 
 ```ts
-queues.video.process.queue({
+await jobs.video.process.queue({
   // payload type inferred from schema
   outputFormat: 'mp4',
   path: '/path/to/video.mov',
 })
-queues.sendEmail.queue({
+await jobs.sendEmail.queue({
   to: 'user@example.com',
   subject: 'Hello',
   body: 'This is a test email',
@@ -74,7 +68,7 @@ queues.sendEmail.queue({
 Bulk jobs:
 
 ```ts
-queues.sendEmail.queueBulk([
+await jobs.sendEmail.queueBulk([
   {
     to: 'user@example.com',
     subject: 'Hello',
