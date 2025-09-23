@@ -1,31 +1,38 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
-import type { Job as BullJob, QueueOptions as BullQueueOptions } from 'bullmq'
 import type {
+  FlowJob as BullFlowJob,
+  Job as BullJob,
+  QueueOptions as BullQueueOptions,
+} from 'bullmq'
+import type {
+  DefineFlowOptions,
   DefineJobOptions,
+  Flow,
+  FlowStep,
   Job,
   JobDefinitionsObject,
+  QueueFlowProxyAccessor,
   QueueJobProxy,
   QueueJobProxyAccessor,
   WorkerOptions,
 } from './types'
-import {} from '@standard-schema/spec'
-import { Queue as BullQueue, Worker as BullWorker } from 'bullmq'
+import { Queue as BullQueue, Worker as BullWorker, FlowProducer } from 'bullmq'
 import IORedis from 'ioredis'
-import { internalSymbol, StandardSchemaV1Error } from './types'
+import { FlowBuilder, flowSymbol, jobSymbol, StandardSchemaV1Error } from './types'
 
-export function defineJob<Schema extends StandardSchemaV1>(
-  opts: DefineJobOptions<Schema>,
-): Job<Schema> {
+export function defineJob<Schema extends StandardSchemaV1, Output>(
+  opts: DefineJobOptions<Schema, Output>,
+): Job<Schema, Output> {
   return {
     ...opts,
-    [internalSymbol]: {
-      async addToQueue(queue: BullQueue, payload: unknown) {
+    [jobSymbol]: <Job<Schema, Output>[typeof jobSymbol]>{
+      async addToQueue(queue, payload) {
         const parsed = await opts.schema['~standard'].validate(payload)
         if (parsed.issues) throw new StandardSchemaV1Error(parsed.issues)
 
         return queue.add(queue.name, parsed.value)
       },
-      async addToQueueBulk(queue: BullQueue, payloads: unknown[]) {
+      async addToQueueBulk(queue, payloads) {
         return queue.addBulk(
           await Promise.all(
             payloads.map(async (payload) => {
@@ -44,26 +51,115 @@ export function defineJob<Schema extends StandardSchemaV1>(
   }
 }
 
+// const flowProducter = new FlowProducer()
+function buildFlowJobStack(opts: {
+  rootInputPayload: unknown
+  steps: FlowStep<any, any>[]
+  flowName: string
+}) {
+  if (opts.steps.length === 0) throw new Error(`Flow ${opts.flowName} has no steps`)
+  const firstStep = opts.steps[0]!
+
+  let currentStep: BullFlowJob = {
+    name: `${opts.flowName}_${firstStep.name}`,
+    queueName: `${opts.flowName}_${firstStep.name}`,
+    data: opts.rootInputPayload,
+  }
+
+  for (const step of opts.steps.slice(1)) {
+    currentStep = {
+      name: `${opts.flowName}_${step.name}`,
+      queueName: `${opts.flowName}_${step.name}`,
+      children: [currentStep],
+    }
+  }
+
+  return {
+    name: `${opts.flowName}`,
+    queueName: `${opts.flowName}`,
+    children: [currentStep],
+  } satisfies BullFlowJob
+}
+
+export function defineFlow<Schema extends StandardSchemaV1, Output>(
+  opts: DefineFlowOptions<Schema, Output>,
+): Flow<Schema, Output> {
+  const steps = opts.flow(new FlowBuilder()).steps
+  return {
+    ...opts,
+    [flowSymbol]: <Flow<Schema, Output>[typeof flowSymbol]>{
+      steps,
+      async addToQueue(flowName, flowProducer, payload) {
+        const parsed = await opts.schema['~standard'].validate(payload)
+        if (parsed.issues) throw new StandardSchemaV1Error(parsed.issues)
+
+        return flowProducer.add(
+          buildFlowJobStack({
+            rootInputPayload: parsed.value,
+            steps,
+            flowName,
+          }),
+        )
+      },
+      async addToQueueBulk(flowName, flowProducer, payloads) {
+        return flowProducer.addBulk(
+          await Promise.all(
+            payloads.map(async (payload) => {
+              const parsed = await opts.schema['~standard'].validate(payload)
+              if (parsed.issues) throw new StandardSchemaV1Error(parsed.issues)
+
+              return buildFlowJobStack({
+                flowName,
+                rootInputPayload: parsed.value,
+                steps,
+              })
+            }),
+          ),
+        )
+      },
+    },
+  }
+}
+
 export function defineQueues<J extends JobDefinitionsObject>(jobs: J, opts?: BullQueueOptions) {
   const connection =
     opts?.connection ??
     new IORedis({
       maxRetriesPerRequest: null,
     })
-  const queues = new Map<string, BullQueue>()
 
+  const queues = new Map<string, BullQueue<BullJob<any, any, string>>>()
   async function getQueue(jobName: string) {
-    let queue = queues.get(jobName)
-    if (!queue) {
-      queue = new BullQueue(jobName, {
-        ...opts,
-        connection,
-      })
-      queues.set(jobName, queue)
-      await queue.waitUntilReady()
-    }
+    if (queues.has(jobName)) return queues.get(jobName)!
+
+    const queue = new BullQueue<BullJob<any, any, string>>(jobName, {
+      ...opts,
+      defaultJobOptions: {
+        removeOnComplete: true,
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000,
+        },
+        ...opts?.defaultJobOptions,
+      },
+      connection,
+    })
+    queues.set(jobName, queue)
+    await queue.waitUntilReady()
 
     return queue
+  }
+
+  let flowProducer: FlowProducer | null = null
+  async function getFlowProducer() {
+    if (flowProducer) return flowProducer
+
+    flowProducer = new FlowProducer({
+      connection,
+    })
+    await flowProducer.waitUntilReady()
+    return flowProducer
   }
 
   function createProxy(obj: JobDefinitionsObject, path: string[]) {
@@ -71,20 +167,33 @@ export function defineQueues<J extends JobDefinitionsObject>(jobs: J, opts?: Bul
       get(target, p, receiver) {
         if (typeof p !== 'string') return
 
-        const fullPath = [...path, p]
         const jobOrJobs = Reflect.get(target, p, receiver)
+        if (typeof jobOrJobs !== 'object') return
 
-        if (jobOrJobs && typeof jobOrJobs === 'object' && internalSymbol in jobOrJobs) {
+        const fullPath = [...path, p]
+
+        if (jobSymbol in jobOrJobs) {
           const jobName = fullPath.join('-')
 
           const accessor = async (payload: unknown) => {
-            return jobOrJobs[internalSymbol].addToQueue(await getQueue(jobName), payload)
+            return jobOrJobs[jobSymbol].addToQueue(await getQueue(jobName), payload)
           }
           accessor.bulk = async (payloads: unknown[]) => {
-            return jobOrJobs[internalSymbol].addToQueueBulk(await getQueue(jobName), payloads)
+            return jobOrJobs[jobSymbol].addToQueueBulk(await getQueue(jobName), payloads)
           }
 
-          return accessor satisfies QueueJobProxyAccessor<any>
+          return accessor satisfies QueueJobProxyAccessor<any, any>
+        } else if (flowSymbol in jobOrJobs) {
+          const flowName = fullPath.join('-')
+
+          const accessor = async (payload: unknown) => {
+            return jobOrJobs[flowSymbol].addToQueue(flowName, await getFlowProducer(), payload)
+          }
+          accessor.bulk = async (payloads: unknown[]) => {
+            return jobOrJobs[flowSymbol].addToQueueBulk(flowName, await getFlowProducer(), payloads)
+          }
+
+          return accessor satisfies QueueFlowProxyAccessor<any>
         }
 
         return createProxy(jobOrJobs, fullPath)
@@ -94,7 +203,10 @@ export function defineQueues<J extends JobDefinitionsObject>(jobs: J, opts?: Bul
   return createProxy(jobs, []) as unknown as QueueJobProxy<J>
 }
 
-export async function startWorkers<J extends JobDefinitionsObject>(jobs: J, opts?: WorkerOptions) {
+export async function startWorkers<J extends JobDefinitionsObject>(
+  jobs: J,
+  opts?: WorkerOptions<any, any>,
+) {
   const connection =
     opts?.connection ??
     new IORedis({
@@ -108,15 +220,14 @@ export async function startWorkers<J extends JobDefinitionsObject>(jobs: J, opts
 
       const fullPath = [...path, key]
 
-      if (typeof value === 'object' && internalSymbol in value) {
+      if (jobSymbol in value) {
         const jobName = fullPath.join('-')
-
-        const hooks = value.workerOptions?.hooks ?? opts?.hooks
 
         const worker = new BullWorker(
           jobName,
           async (job) => {
-            return value.handler(job.data, job as BullJob<any, void, string>)
+            // eslint-disable-next-line ts/no-unsafe-return
+            return value.run(job.data, job)
           },
           {
             ...opts,
@@ -125,12 +236,76 @@ export async function startWorkers<J extends JobDefinitionsObject>(jobs: J, opts
           },
         )
 
+        const hooks = value.workerOptions?.hooks ?? opts?.hooks
         if (hooks)
           for (const [hookName, hook] of Object.entries(hooks)) {
             worker.addListener(hookName, hook)
           }
 
         workers.set(jobName, worker)
+      } else if (flowSymbol in value) {
+        const flowName = fullPath.join('-')
+
+        const worker = new BullWorker(
+          flowName,
+          async (job) => {
+            // eslint-disable-next-line ts/no-unsafe-return
+            const results = await job.getChildrenValues().then((res) => Object.values(res))
+            if (results.length !== 1)
+              throw new Error('Flow root job should have exactly one child job')
+
+            // eslint-disable-next-line ts/no-unsafe-return
+            return results[0]
+          },
+          {
+            ...opts,
+            ...value.workerOptions,
+            connection,
+          },
+        )
+
+        const hooks = value.workerOptions?.hooks ?? opts?.hooks
+        if (hooks)
+          for (const [hookName, hook] of Object.entries(hooks)) {
+            worker.addListener(hookName, hook)
+          }
+
+        workers.set(flowName, worker)
+
+        // add workers for each step
+        for (const step of value[flowSymbol].steps) {
+          const jobName = `${flowName}_${step.name}`
+          const stepWorker = new BullWorker(
+            jobName,
+            async (job) => {
+              // first step gets job data as input
+              // eslint-disable-next-line ts/no-unsafe-return
+              if (value[flowSymbol].steps.indexOf(step) === 0) return step.run(job.data, job)
+
+              // eslint-disable-next-line ts/no-unsafe-return
+              const results = await job.getChildrenValues().then((res) => Object.values(res))
+              if (results.length !== 1)
+                throw new Error('Flow job should have exactly one child job')
+
+              // eslint-disable-next-line ts/no-unsafe-assignment
+              const input = results[0]
+              // eslint-disable-next-line ts/no-unsafe-return
+              return step.run(input, job)
+            },
+            {
+              ...opts,
+              ...step.workerOptions,
+              connection,
+            },
+          )
+
+          if (hooks)
+            for (const [hookName, hook] of Object.entries(hooks)) {
+              stepWorker.addListener(hookName, hook)
+            }
+
+          workers.set(jobName, stepWorker)
+        }
       } else {
         traverse(value, fullPath)
       }
