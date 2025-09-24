@@ -110,14 +110,19 @@ export type JobDefinitionsObject = {
 export type JobAccessor<S extends StandardSchemaV1, Output> = {
   queue: (
     payload: StandardSchemaV1.InferInput<S>,
+    opts?: JobsOptions,
   ) => Promise<BullJob<StandardSchemaV1.InferOutput<S>, Output, string>>
   queueBulk: (
     payloads: StandardSchemaV1.InferInput<S>[],
+    opts?: BulkJobOptions,
   ) => Promise<BullJob<StandardSchemaV1.InferOutput<S>, Output, string>[]>
 }
 export type FlowAccessor<S extends StandardSchemaV1> = {
-  queue: (payload: StandardSchemaV1.InferInput<S>) => Promise<JobNode>
-  queueBulk: (payloads: StandardSchemaV1.InferInput<S>[]) => Promise<JobNode[]>
+  queue: (payload: StandardSchemaV1.InferInput<S>, opts?: FlowOpts) => Promise<JobNode>
+  queueBulk: (
+    payloads: StandardSchemaV1.InferInput<S>[],
+    opts?: FlowJob['opts'],
+  ) => Promise<JobNode[]>
 }
 export type Jobs<J extends JobDefinitionsObject> = {
   [K in keyof J]: J[K] extends Job<infer S, infer O>
