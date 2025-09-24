@@ -70,7 +70,10 @@ function buildFlowJobStack(opts: {
     name: `${opts.flowName}_${firstStep.name}`,
     queueName: `${opts.flowName}_${firstStep.name}`,
     data: opts.rootInputPayload,
-    opts: opts.flowOpts,
+    opts: {
+      failParentOnFailure: true,
+      ...opts.flowOpts,
+    },
   }
 
   for (const step of opts.steps.slice(1)) {
@@ -78,7 +81,10 @@ function buildFlowJobStack(opts: {
       name: `${opts.flowName}_${step.name}`,
       queueName: `${opts.flowName}_${step.name}`,
       children: [currentStep],
-      opts: opts.flowOpts,
+      opts: {
+        failParentOnFailure: true,
+        ...opts.flowOpts,
+      },
     }
   }
 
