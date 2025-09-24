@@ -3,6 +3,7 @@ import type {
   FlowJob as BullFlowJob,
   Job as BullJob,
   QueueOptions as BullQueueOptions,
+  FlowJob,
 } from 'bullmq'
 import type {
   DefineFlowOptions,
@@ -21,19 +22,21 @@ import IORedis from 'ioredis'
 import { mapValues } from 'remeda'
 import { FlowBuilder, flowSymbol, jobSymbol, StandardSchemaV1Error } from './types'
 
+export { RateLimitError, UnrecoverableError } from 'bullmq'
+
 export function defineJob<Schema extends StandardSchemaV1, Output>(
   opts: DefineJobOptions<Schema, Output>,
 ): Job<Schema, Output> {
   return {
     ...opts,
     [jobSymbol]: <Job<Schema, Output>[typeof jobSymbol]>{
-      async addToQueue(queue, payload) {
+      async addToQueue(queue, payload, jobOpts) {
         const parsed = await opts.schema['~standard'].validate(payload)
         if (parsed.issues) throw new StandardSchemaV1Error(parsed.issues)
 
-        return queue.add(queue.name, parsed.value)
+        return queue.add(queue.name, parsed.value, jobOpts)
       },
-      async addToQueueBulk(queue, payloads) {
+      async addToQueueBulk(queue, payloads, jobOpts) {
         return queue.addBulk(
           await Promise.all(
             payloads.map(async (payload) => {
@@ -43,6 +46,7 @@ export function defineJob<Schema extends StandardSchemaV1, Output>(
               return {
                 name: queue.name,
                 data: parsed.value,
+                opts: jobOpts,
               }
             }),
           ),
@@ -57,6 +61,7 @@ function buildFlowJobStack(opts: {
   rootInputPayload: unknown
   steps: FlowStep<any, any>[]
   flowName: string
+  flowOpts?: FlowJob['opts']
 }) {
   if (opts.steps.length === 0) throw new Error(`Flow ${opts.flowName} has no steps`)
   const firstStep = opts.steps[0]!
@@ -65,6 +70,7 @@ function buildFlowJobStack(opts: {
     name: `${opts.flowName}_${firstStep.name}`,
     queueName: `${opts.flowName}_${firstStep.name}`,
     data: opts.rootInputPayload,
+    opts: opts.flowOpts,
   }
 
   for (const step of opts.steps.slice(1)) {
@@ -72,14 +78,11 @@ function buildFlowJobStack(opts: {
       name: `${opts.flowName}_${step.name}`,
       queueName: `${opts.flowName}_${step.name}`,
       children: [currentStep],
+      opts: opts.flowOpts,
     }
   }
 
-  return {
-    name: `${opts.flowName}`,
-    queueName: `${opts.flowName}`,
-    children: [currentStep],
-  } satisfies BullFlowJob
+  return currentStep
 }
 
 export function defineFlow<Schema extends StandardSchemaV1, Output>(
@@ -90,7 +93,7 @@ export function defineFlow<Schema extends StandardSchemaV1, Output>(
     ...opts,
     [flowSymbol]: <Flow<Schema, Output>[typeof flowSymbol]>{
       steps,
-      async addToQueue(flowName, flowProducer, payload) {
+      async addToQueue(flowName, flowProducer, payload, flowOpts) {
         const parsed = await opts.schema['~standard'].validate(payload)
         if (parsed.issues) throw new StandardSchemaV1Error(parsed.issues)
 
@@ -100,9 +103,10 @@ export function defineFlow<Schema extends StandardSchemaV1, Output>(
             steps,
             flowName,
           }),
+          flowOpts,
         )
       },
-      async addToQueueBulk(flowName, flowProducer, payloads) {
+      async addToQueueBulk(flowName, flowProducer, payloads, flowOpts) {
         return flowProducer.addBulk(
           await Promise.all(
             payloads.map(async (payload) => {
@@ -113,6 +117,7 @@ export function defineFlow<Schema extends StandardSchemaV1, Output>(
                 flowName,
                 rootInputPayload: parsed.value,
                 steps,
+                flowOpts,
               })
             }),
           ),
@@ -242,32 +247,6 @@ export async function startWorkers<J extends JobDefinitionsObject>(
       } else if (flowSymbol in value) {
         const flowName = fullPath.join('-')
 
-        const worker = new BullWorker(
-          flowName,
-          async (job) => {
-            // eslint-disable-next-line ts/no-unsafe-return
-            const results = await job.getChildrenValues().then((res) => Object.values(res))
-            if (results.length !== 1)
-              throw new Error('Flow root job should have exactly one child job')
-
-            // eslint-disable-next-line ts/no-unsafe-return
-            return results[0]
-          },
-          {
-            ...opts,
-            ...value.workerOptions,
-            connection,
-          },
-        )
-
-        const hooks = value.workerOptions?.hooks ?? opts?.hooks
-        if (hooks)
-          for (const [hookName, hook] of Object.entries(hooks)) {
-            worker.addListener(hookName, hook)
-          }
-
-        workers.set(flowName, worker)
-
         // add workers for each step
         for (const step of value[flowSymbol].steps) {
           const jobName = `${flowName}_${step.name}`
@@ -295,6 +274,7 @@ export async function startWorkers<J extends JobDefinitionsObject>(
             },
           )
 
+          const hooks = value.workerOptions?.hooks ?? opts?.hooks
           if (hooks)
             for (const [hookName, hook] of Object.entries(hooks)) {
               stepWorker.addListener(hookName, hook)

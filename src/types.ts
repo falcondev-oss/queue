@@ -1,11 +1,15 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type {
+  BulkJobOptions,
   Job as BullJob,
   Queue as BullQueue,
   WorkerListener as BullWorkerListener,
   WorkerOptions as BullWorkerOptions,
+  FlowJob,
+  FlowOpts,
   FlowProducer,
   JobNode,
+  JobsOptions,
 } from 'bullmq'
 
 export class StandardSchemaV1Error extends Error {
@@ -35,10 +39,12 @@ export type Job<Schema extends StandardSchemaV1, Output> = DefineJobOptions<Sche
     addToQueue: (
       queue: BullQueue<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>>,
       payload: StandardSchemaV1.InferInput<Schema>,
+      opts?: JobsOptions,
     ) => Promise<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>>
     addToQueueBulk: (
       queue: BullQueue<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>>,
       payloads: StandardSchemaV1.InferInput<Schema>[],
+      opts?: BulkJobOptions,
     ) => Promise<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>[]>
   }
 }
@@ -86,11 +92,13 @@ export type Flow<Schema extends StandardSchemaV1, Output> = DefineFlowOptions<Sc
       flowName: string,
       flowProducer: FlowProducer,
       payload: StandardSchemaV1.InferInput<Schema>,
+      opts?: FlowOpts,
     ) => Promise<JobNode>
     addToQueueBulk: (
       flowName: string,
       flowProducer: FlowProducer,
       payloads: StandardSchemaV1.InferInput<Schema>[],
+      opts?: FlowJob['opts'],
     ) => Promise<JobNode[]>
   }
 }
