@@ -13,7 +13,7 @@ npm add @falcondev-oss/queue
 #### 1. Define your job schemas and handlers
 
 ```ts
-const jobs = defineJobs({
+const jobs = {
   video: {
     process: defineJob({
       schema: z.object({
@@ -21,7 +21,7 @@ const jobs = defineJobs({
         outputFormat: z.enum(['mp4', 'avi', 'mov']),
       }),
       async run(payload) {
-        // process video
+        await processVideo(payload.path, payload.outputFormat)
       },
       workerOptions: {
         // only one video processed at a time
@@ -36,29 +36,30 @@ const jobs = defineJobs({
       body: z.string(),
     }),
     async run(payload) {
-      // send email to `payload.to` with `payload.subject` and `payload.body`
+      await sendEmail(payload.to, payload.subject, payload.body)
     },
   }),
-})
+}
 ```
 
-#### 2. Start workers
+#### 2. Create queue client
+
+You only need the type of your job definitions, so it's easier to use across your entire backend stack without any runtime dependencies.
 
 ```ts
-await startWorkers(jobs)
+const queue = createQueueClient<typeof jobs>()
 ```
 
-#### 3. Queue jobs
+#### 2. Queue jobs
 
 Single jobs:
 
 ```ts
-await jobs.video.process.queue({
-  // payload type inferred from schema
+await queue.video.process.add({
   outputFormat: 'mp4',
   path: '/path/to/video.mov',
 })
-await jobs.sendEmail.queue({
+await queue.sendEmail.add({
   to: 'user@example.com',
   subject: 'Hello',
   body: 'This is a test email',
@@ -68,16 +69,29 @@ await jobs.sendEmail.queue({
 Bulk jobs:
 
 ```ts
-await jobs.sendEmail.queueBulk([
+await queue.sendEmail.addBulk([
   {
-    to: 'user@example.com',
-    subject: 'Hello',
-    body: 'This is a test email',
+    payload: {
+      to: 'user@example.com',
+      subject: 'Hello',
+      body: 'This is a test email',
+    },
   },
   {
-    to: 'user2@example.com',
-    subject: 'Hello 2',
-    body: 'This is another test email',
+    payload: {
+      to: 'user2@example.com',
+      subject: 'Hello 2',
+      body: 'This is another test email',
+    },
+    opts: {
+      attempts: 5, // override default job options
+    },
   },
 ])
+```
+
+#### 3. Start workers
+
+```ts
+await startWorkers(jobs)
 ```

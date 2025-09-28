@@ -2,28 +2,12 @@ import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type {
   BulkJobOptions,
   Job as BullJob,
-  Queue as BullQueue,
   WorkerListener as BullWorkerListener,
   WorkerOptions as BullWorkerOptions,
-  FlowJob,
-  FlowOpts,
-  FlowProducer,
-  JobNode,
   JobsOptions,
 } from 'bullmq'
 
-export class StandardSchemaV1Error extends Error {
-  public readonly issues: ReadonlyArray<StandardSchemaV1.Issue>
-
-  constructor(issues: ReadonlyArray<StandardSchemaV1.Issue>) {
-    super(issues[0]?.message)
-    this.name = 'SchemaError'
-    this.issues = issues
-  }
-}
-
 export const jobSymbol = Symbol('job')
-export const flowSymbol = Symbol('flow')
 
 export type DefineJobOptions<Schema extends StandardSchemaV1, Output> = {
   schema: Schema
@@ -35,105 +19,38 @@ export type DefineJobOptions<Schema extends StandardSchemaV1, Output> = {
 }
 
 export type Job<Schema extends StandardSchemaV1, Output> = DefineJobOptions<Schema, Output> & {
-  [jobSymbol]: {
-    addToQueue: (
-      queue: BullQueue<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>>,
-      payload: StandardSchemaV1.InferInput<Schema>,
-      opts?: JobsOptions,
-    ) => Promise<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>>
-    addToQueueBulk: (
-      queue: BullQueue<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>>,
-      payloads: StandardSchemaV1.InferInput<Schema>[],
-      opts?: BulkJobOptions,
-    ) => Promise<BullJob<StandardSchemaV1.InferOutput<Schema>, Output, string>[]>
-  }
+  [jobSymbol]: true
 }
 
-export type FlowStep<Schema extends StandardSchemaV1, Output> = Omit<
-  DefineJobOptions<Schema, Output>,
-  'schema'
-> & { name: string }
-// eslint-disable-next-line unused-imports/no-unused-vars
-export type FlowBuilderResult<Output> = {
-  steps: FlowStep<any, any>[]
-}
-
-export class FlowBuilder<Input> {
-  private steps: FlowStep<any, any>[] = []
-
-  step<Output>(
-    name: string,
-    run: DefineJobOptions<StandardSchemaV1<Input, Input>, Output>['run'],
-    opts?: Omit<DefineJobOptions<StandardSchemaV1<Input, Input>, Output>, 'schema' | 'run'>,
-  ) {
-    this.steps.push({
-      ...opts,
-      run,
-      name,
-    })
-    return this as FlowBuilder<Awaited<Output>>
-  }
-
-  build(): FlowBuilderResult<Awaited<Input>> {
-    return { steps: this.steps }
-  }
-}
-
-export type DefineFlowOptions<Schema extends StandardSchemaV1, Output> = {
-  schema: Schema
-  flow: (builder: FlowBuilder<StandardSchemaV1.InferOutput<Schema>>) => FlowBuilderResult<Output>
-  workerOptions?: WorkerOptions<StandardSchemaV1.InferOutput<Schema>, Output>
-}
-
-export type Flow<Schema extends StandardSchemaV1, Output> = DefineFlowOptions<Schema, Output> & {
-  [flowSymbol]: {
-    steps: FlowStep<any, any>[]
-    addToQueue: (
-      flowName: string,
-      flowProducer: FlowProducer,
-      payload: StandardSchemaV1.InferInput<Schema>,
-      opts?: FlowOpts,
-    ) => Promise<JobNode>
-    addToQueueBulk: (
-      flowName: string,
-      flowProducer: FlowProducer,
-      payloads: StandardSchemaV1.InferInput<Schema>[],
-      opts?: FlowJob['opts'],
-    ) => Promise<JobNode[]>
-  }
-}
-
-export type JobDefinitionsObject = {
-  [key: string]: Job<any, any> | Flow<any, any> | JobDefinitionsObject
+export type JobDefinitions = {
+  [key: string]: Job<StandardSchemaV1<any, any>, any> | JobDefinitions
 }
 
 export type JobAccessor<S extends StandardSchemaV1, Output> = {
-  queue: (
+  add: (
     payload: StandardSchemaV1.InferInput<S>,
     opts?: JobsOptions,
   ) => Promise<BullJob<StandardSchemaV1.InferOutput<S>, Output, string>>
-  queueBulk: (
-    payloads: StandardSchemaV1.InferInput<S>[],
-    opts?: BulkJobOptions,
+  addBulk: (
+    jobs: {
+      payload: StandardSchemaV1.InferInput<S>
+      opts?: BulkJobOptions
+    }[],
   ) => Promise<BullJob<StandardSchemaV1.InferOutput<S>, Output, string>[]>
 }
-export type FlowAccessor<S extends StandardSchemaV1> = {
-  queue: (payload: StandardSchemaV1.InferInput<S>, opts?: FlowOpts) => Promise<JobNode>
-  queueBulk: (
-    payloads: StandardSchemaV1.InferInput<S>[],
-    opts?: FlowJob['opts'],
-  ) => Promise<JobNode[]>
-}
-export type Jobs<J extends JobDefinitionsObject> = {
+export type QueueClient<J extends JobDefinitions> = {
   [K in keyof J]: J[K] extends Job<infer S, infer O>
     ? JobAccessor<S, O>
-    : J[K] extends Flow<infer S, any>
-      ? FlowAccessor<S>
-      : J[K] extends JobDefinitionsObject
-        ? Jobs<J[K]>
-        : never
+    : J[K] extends JobDefinitions
+      ? QueueClient<J[K]>
+      : never
 }
 
 export type WorkerOptions<Input, Output> = Omit<Partial<BullWorkerOptions>, 'autorun' | 'name'> & {
   hooks?: Partial<BullWorkerListener<Input, Output, string>>
 }
+
+export type inferJobInput<J> = J extends Job<infer S, any> ? StandardSchemaV1.InferInput<S> : never
+export type inferJobPayload<J> =
+  J extends Job<infer S, any> ? StandardSchemaV1.InferOutput<S> : never
+export type inferJobOutput<J> = J extends Job<any, infer O> ? O : never
