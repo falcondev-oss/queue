@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type { Job as BullJob, QueueOptions as BullQueueOptions } from 'bullmq'
+import type { SuperJSONResult } from 'superjson'
 import type {
   DefineJobOptions,
   Job,
@@ -10,6 +11,7 @@ import type {
 } from './types'
 import { Queue as BullQueue, Worker as BullWorker, UnrecoverableError } from 'bullmq'
 import IORedis from 'ioredis'
+import superjson from 'superjson'
 import { jobSymbol } from './types'
 
 export { RateLimitError, UnrecoverableError } from 'bullmq'
@@ -30,11 +32,11 @@ export function createQueueClient<J extends JobDefinitions>(opts?: BullQueueOpti
       maxRetriesPerRequest: null,
     })
 
-  const queues = new Map<string, BullQueue<BullJob<any, any, string>>>()
+  const queues = new Map<string, BullQueue<BullJob<SuperJSONResult, any, string>>>()
   async function getQueue(jobName: string) {
     if (queues.has(jobName)) return queues.get(jobName)!
 
-    const queue = new BullQueue<BullJob<any, any, string>>(jobName, {
+    const queue = new BullQueue<BullJob<SuperJSONResult, any, string>>(jobName, {
       ...opts,
       defaultJobOptions: {
         removeOnComplete: true,
@@ -62,7 +64,7 @@ export function createQueueClient<J extends JobDefinitions>(opts?: BullQueueOpti
             const jobName = path.join('-')
             return (async (payload, jobOpts) => {
               const queue = await getQueue(jobName)
-              return queue.add(queue.name, payload, jobOpts)
+              return queue.add(queue.name, superjson.serialize(payload), jobOpts)
             }) satisfies JobAccessor<any, any>['add']
           }
 
@@ -73,8 +75,7 @@ export function createQueueClient<J extends JobDefinitions>(opts?: BullQueueOpti
               return queue.addBulk(
                 bulkJobs.map((job) => ({
                   name: jobName,
-                  // eslint-disable-next-line ts/no-unsafe-assignment
-                  data: job.payload,
+                  data: superjson.serialize(job.payload),
                   opts: job.opts,
                 })),
               )
@@ -109,14 +110,15 @@ export async function startWorkers<J extends JobDefinitions>(
       if (jobSymbol in jobDefinition) {
         const jobName = fullPath.join('-')
 
-        const worker = new BullWorker<unknown, unknown, string>(
+        const worker = new BullWorker<SuperJSONResult, unknown, string>(
           jobName,
           async (job) => {
-            const parsed = await jobDefinition.schema['~standard'].validate(job.data)
+            const parsedData = superjson.deserialize(job.data)
+            const parsed = await jobDefinition.schema['~standard'].validate(parsedData)
             if (parsed.issues) throw new UnrecoverableError(parsed.issues[0]?.message)
 
             // eslint-disable-next-line ts/no-unsafe-return
-            return jobDefinition.run(job.data, job)
+            return jobDefinition.run(parsed.value, job)
           },
           {
             ...defaultOpts,
